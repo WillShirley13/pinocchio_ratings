@@ -17,15 +17,16 @@ pub const ID: Pubkey = [
 ];
 
 fn process_instruction(
-    program_id: &Pubkey,
+    _program_id: &Pubkey,
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
     match data.split_first() {
-        Some((InitAdmin::DISCRIMINATOR, data)) => InitAdmin::try_from((accounts, data))?.process(),
-        Some((InitRating::DISCRIMINATOR, data)) => {
+        Some((&InitAdmin::DISCRIMINATOR, data)) => InitAdmin::try_from((accounts, data))?.process(),
+        Some((&InitRating::DISCRIMINATOR, data)) => {
             InitRating::try_from((accounts, data))?.process()
         }
+        Some((&DeleteRating::DISCRIMINATOR, _)) => DeleteRating::try_from(accounts)?.process(),
         _ => Err(RatingsErrors::InvalidInstruction.into()),
     }
 }

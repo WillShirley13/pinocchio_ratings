@@ -19,6 +19,8 @@ pub enum RatingsErrors {
     ExpectedEmptyAccount,
     #[error("Invalid mint account")]
     InvalidMintAccount,
+    #[error("Invalid instruction")]
+    InvalidInstruction,
 }
 
 impl From<RatingsErrors> for ProgramError {

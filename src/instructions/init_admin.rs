@@ -60,7 +60,11 @@ impl TryFrom<&[u8]> for InitAdminPayload {
     type Error = ProgramError;
 
     fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-        let payload: u64 = u64::try_from(data).map_err(|_| ProgramError::InvalidAccountData)?;
+        let payload: u64 = u64::from_le_bytes(
+            data[..8]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?,
+        );
         Ok(Self {
             reward_amount: payload,
         })
@@ -82,7 +86,10 @@ impl<'a> TryFrom<(&'a [AccountInfo], &[u8])> for InitAdmin<'a> {
         Ok(Self { accounts, payload })
     }
 }
+
 impl<'a> InitAdmin<'a> {
+    pub const DISCRIMINATOR: u8 = 0;
+
     pub fn process(self) -> ProgramResult {
         let mut accounts: InitAdminAccounts<'a> = self.accounts; // Make mutable if needed
         let payload: InitAdminPayload = self.payload;
@@ -94,16 +101,19 @@ impl<'a> InitAdmin<'a> {
         SystemProgramAccount::check_is_system_program(accounts.system_program)?;
         TokenProgramAccount::check_is_token_program(accounts.token_program)?;
         AssociateTokenProgram::check_is_associate_token_program(accounts.associated_token_program)?;
-        AssociateTokenAccount::check_is_valid_ata(
+        AssociatedTokenAccount::check_is_valid_ata(
             accounts.admin_ata,
             accounts.authority,
             accounts.ratings_mint,
         )?;
 
-        let signer: [Signer<'_, '_>; 1] = [Signer::from([
+        let bump_slice: [u8; 1] = [accounts.bump];
+
+        let seeds: [Seed<'_>; 2] = [
             Seed::from(b"ratings_admin"),
-            Seed::from(accounts.bump),
-        ])];
+            Seed::from(bump_slice.as_ref()),
+        ];
+        let signer: [Signer<'_, '_>; 1] = [Signer::from(&seeds)];
 
         // Create admin account
         let admin_rent = Rent::get()?.minimum_balance(AdminState::LEN);

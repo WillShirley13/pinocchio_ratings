@@ -1,5 +1,4 @@
 use pinocchio::{
-    ProgramResult,
     account_info::{AccountInfo, Ref, RefMut},
     program_error::ProgramError,
     pubkey::Pubkey,
@@ -150,7 +149,7 @@ impl RatingState {
     }
 
     pub fn set_rating(&mut self, rating: u8) -> Result<(), ProgramError> {
-        if rating < 1 || rating > 10 {
+        if !(1..=10).contains(&rating) {
             return Err(RatingsErrors::InvalidRatingValue.into());
         }
 

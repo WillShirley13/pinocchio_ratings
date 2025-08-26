@@ -97,7 +97,7 @@ impl TryFrom<&[u8]> for InitRatingPayload {
             return Err(RatingsErrors::MovieTitleTooLong.into());
         }
 
-        if rating < 1 || rating > 10 {
+        if !(1..=10).contains(&rating) {
             return Err(RatingsErrors::InvalidRatingValue.into());
         }
 
@@ -125,6 +125,8 @@ impl<'a> TryFrom<(&'a [AccountInfo], &[u8])> for InitRating<'a> {
 }
 
 impl<'a> InitRating<'a> {
+    pub const DISCRIMINATOR: u8 = 1;
+
     pub fn process(&mut self) -> ProgramResult {
         let accounts: &mut InitRatingAccounts<'_> = &mut self.accounts;
         let payload: &InitRatingPayload = &self.payload;
@@ -176,7 +178,7 @@ impl<'a> InitRating<'a> {
             payload.movie_title.to_owned(),
             payload.rating,
             *accounts.authority.key(),
-            clock::Clock::get()?.unix_timestamp as i64,
+            clock::Clock::get()?.unix_timestamp,
             accounts.rating_bump,
         )?;
 
@@ -205,7 +207,7 @@ impl<'a> InitRating<'a> {
         }
         .invoke_signed(&[Signer::from(&[
             Seed::from(b"ratings_admin"),
-            Seed::from(&[accounts.rating_bump]),
+            Seed::from(&[admin_data.bump]),
         ])])?;
 
         Ok(())
