@@ -1,9 +1,9 @@
 use crate::{RatingAccount, RatingState, SignerAccount, SystemProgramAccount};
 use pinocchio::{
-    ProgramResult,
     account_info::{AccountInfo, Ref},
     instruction::{Seed, Signer},
     program_error::ProgramError,
+    ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
 
@@ -17,7 +17,7 @@ impl<'a> TryFrom<&'a [AccountInfo]> for DeleteRatingAccounts<'a> {
     type Error = ProgramError;
 
     fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
-        let [authority, rating, system_program, _] = accounts else {
+        let [authority, rating, system_program] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys);
         };
 
@@ -55,8 +55,7 @@ impl<'a> DeleteRating<'a> {
         RatingAccount::check_is_valid_rating(
             self.accounts.rating,
             self.accounts.authority,
-            str::from_utf8(&rating_data.movie_title)
-                .map_err(|_| ProgramError::InvalidAccountData)?,
+            &rating_data.movie_title,
         )?;
 
         let rating_lamports: u64 = self.accounts.rating.lamports();

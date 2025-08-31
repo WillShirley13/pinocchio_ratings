@@ -18,17 +18,12 @@ pub struct AdminState {
 impl AsRef<[u8]> for AdminState {
     fn as_ref(&self) -> &[u8] {
         // SAFETY: repr(C) + POD ⇒ byte-compatible
-        unsafe {
-            core::slice::from_raw_parts(
-                self as *const Self as *const u8,
-                core::mem::size_of::<AdminState>(),
-            )
-        }
+        unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) }
     }
 }
 
 impl AdminState {
-    pub const LEN: usize = size_of::<AdminState>();
+    pub const LEN: usize = 32 + 32 + 8 + 8; // 8 bytes for bump to ensure memory alignment
 
     #[inline(always)]
     pub fn load(account: &AccountInfo) -> Result<Ref<Self>, ProgramError> {
@@ -83,8 +78,9 @@ impl AdminState {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RatingState {
-    pub movie_title: [u8; 32], // Movie title (max 64 chars)
+    pub movie_title: [u8; 32], // Movie title (max 32 chars)
     pub rating: u8,            // Rating 1-10
     pub owner: Pubkey,         // User who created the rating
     pub timestamp: i64,        // Unix timestamp of creation
@@ -93,18 +89,12 @@ pub struct RatingState {
 
 impl AsRef<[u8]> for RatingState {
     fn as_ref(&self) -> &[u8] {
-        unsafe {
-            core::slice::from_raw_parts(
-                self as *const Self as *const u8,
-                core::mem::size_of::<RatingState>(),
-            )
-        }
+        unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) }
     }
 }
 
 impl RatingState {
-    pub const LEN: usize =
-        size_of::<[u8; 32]>() + size_of::<u8>() * 2 + size_of::<Pubkey>() + size_of::<i64>();
+    pub const LEN: usize = 32 + 8 + 32 + 8 + 8; // 8 bytes for rating and bump to ensure memory alignment
 
     #[inline(always)]
     pub fn load(account: &AccountInfo) -> Result<Ref<Self>, ProgramError> {
@@ -172,14 +162,18 @@ impl RatingState {
 
     #[inline(always)]
     pub fn set_inner(
-        movie_title: String, // Movie title (max 64 chars)
+        movie_title: String, // Movie title (max 32 chars)
         rating: u8,          // Rating 1-10
         owner: Pubkey,       // User who created the rating
         timestamp: i64,      // Unix timestamp of creation
         bump: u8,
     ) -> Result<Self, ProgramError> {
-        let mut movie_title_array = [0u8; 32];
-        let movie_title_bytes = movie_title.as_bytes();
+        if movie_title.len() > 32 {
+            return Err(RatingsErrors::MovieTitleTooLong.into());
+        }
+
+        let mut movie_title_array: [u8; 32] = [0u8; 32];
+        let movie_title_bytes: &[u8] = movie_title.as_bytes();
         movie_title_array[..movie_title_bytes.len()].copy_from_slice(movie_title_bytes);
 
         Ok(Self {

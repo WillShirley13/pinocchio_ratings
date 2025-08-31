@@ -1,9 +1,9 @@
 use crate::errors::RatingsErrors;
 use pinocchio::{
-    ProgramResult,
     account_info::AccountInfo,
     program_error::ProgramError,
-    pubkey::{Pubkey, find_program_address},
+    pubkey::{find_program_address, Pubkey},
+    ProgramResult,
 };
 
 pub struct SignerAccount;
@@ -42,10 +42,10 @@ impl RatingAccount {
     pub fn check_is_valid_rating(
         rating_account: &AccountInfo,
         user: &AccountInfo,
-        movie_title: &str,
+        movie_title: &[u8],
     ) -> Result<u8, ProgramError> {
         let (true_rating_key, bump) =
-            find_program_address(&[user.key().as_ref(), movie_title.as_bytes()], &crate::ID);
+            find_program_address(&[user.key().as_ref(), movie_title], &crate::ID);
 
         if rating_account.key() != &true_rating_key {
             return Err(RatingsErrors::InvalidRatingAccount.into());
@@ -70,7 +70,7 @@ impl RatingAccount {
 pub struct SystemProgramAccount;
 impl SystemProgramAccount {
     pub fn check_is_system_program(account: &AccountInfo) -> Result<(), ProgramError> {
-        if !account.is_owned_by(&pinocchio_system::ID) {
+        if account.key() != &pinocchio_system::ID {
             return Err(RatingsErrors::InvalidOwner.into());
         }
 

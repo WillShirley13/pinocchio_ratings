@@ -1,0 +1,24 @@
+{
+    "type": "module",
+    "scripts": {
+        "test": "jest --config=jest.config.js pinocchio_rating.test.ts",
+        "dev": "nodemon --loader ts-node/esm pinocchio_rating.test.ts"
+    },
+    "dependencies": {
+        "@solana-program/compute-budget": "0.8.0",
+        "@solana-program/memo": "0.7.0",
+        "@solana-program/system": "0.7.0",
+        "@solana-program/token": "0.5.1",
+        "@solana/kit": "3.0.0",
+        "@solana/programs": "3.0.0"
+    },
+    "devDependencies": {
+        "@types/jest": "30.0.0",
+        "@types/node": "24.3.0",
+        "jest": "30.1.1",
+        "nodemon": "3.1.10",
+        "ts-jest": "29.4.1",
+        "ts-node": "10.9.2",
+        "typescript": "5.9.2"
+    }
+}

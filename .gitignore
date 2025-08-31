@@ -1,1 +1,14 @@
 /target
+
+/keys
+
+/test-ledger
+
+# Tests workspace (Node/TS)
+tests/node_modules/
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

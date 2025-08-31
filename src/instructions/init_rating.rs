@@ -1,21 +1,20 @@
-use crate::helpers::TokenAccount;
 use crate::{
     AdminAccount, AdminState, AssociateTokenProgram, AssociatedTokenAccount, MintAccount,
-    RatingAccount, RatingState, RatingsErrors, SystemProgramAccount, TokenProgramAccount,
+    RatingAccount, RatingState, SystemProgramAccount, TokenProgramAccount,
 };
-use pinocchio::ProgramResult;
 use pinocchio::instruction::{Seed, Signer};
 use pinocchio::program_error::ProgramError;
 use pinocchio::{
     account_info::{AccountInfo, Ref, RefMut},
-    sysvars::{Sysvar, clock, rent::Rent},
+    sysvars::{clock, rent::Rent, Sysvar},
 };
+use pinocchio::{msg, ProgramResult};
 use pinocchio_system::instructions::CreateAccount;
 use pinocchio_token::instructions::TransferChecked;
 use pinocchio_token::state::Mint;
 use pinocchio_token::{
-    ID as TOKEN_PROGRAM_ID, instructions::InitializeAccount3,
-    state::TokenAccount as PinoTokenAccount,
+    instructions::InitializeAccount3, state::TokenAccount as PinoTokenAccount,
+    ID as TOKEN_PROGRAM_ID,
 };
 
 pub struct InitRatingAccounts<'a> {
@@ -35,18 +34,9 @@ impl<'a> TryFrom<&'a [AccountInfo]> for InitRatingAccounts<'a> {
     type Error = ProgramError;
 
     fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
-        let [
-            authority,
-            rating,
-            authority_ata,
-            admin,
-            admin_ata,
-            ratings_mint,
-            system_program,
-            token_program,
-            associated_token_program,
-            _,
-        ] = accounts
+        msg!("Configuring InitRatingAccounts accounts");
+        let [authority, rating, authority_ata, admin, admin_ata, ratings_mint, system_program, token_program, associated_token_program] =
+            accounts
         else {
             return Err(ProgramError::InvalidArgument);
         };
@@ -75,31 +65,18 @@ impl TryFrom<&[u8]> for InitRatingPayload {
     type Error = ProgramError;
 
     fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-        if data.len() < 5 {
+        msg!("Parsing InitRatingPayload");
+        if data.len() < 2 {
+            // at least 1 byte title + 1 byte rating
             return Err(ProgramError::InvalidInstructionData);
         }
-        let mut offset = 0;
-        let title_len = u32::from_le_bytes(
-            data[offset..offset + 4]
-                .try_into()
-                .map_err(|_| ProgramError::InvalidInstructionData)?,
-        );
-        offset += 4;
-        if data.len() < offset + title_len as usize + 1 {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-        let movie_title = String::from_utf8(data[offset..offset + title_len as usize].to_vec())
+
+        let rating = data[data.len() - 1]; // last byte is rating
+        let title_bytes = &data[..data.len() - 1]; // everything else is title
+        let movie_title = String::from_utf8(title_bytes.to_vec())
             .map_err(|_| ProgramError::InvalidInstructionData)?;
-        offset += title_len as usize;
-        let rating = data[offset];
 
-        if movie_title.len() > 32 {
-            return Err(RatingsErrors::MovieTitleTooLong.into());
-        }
-
-        if !(1..=10).contains(&rating) {
-            return Err(RatingsErrors::InvalidRatingValue.into());
-        }
+        // validation...
 
         Ok(Self {
             movie_title,
@@ -133,33 +110,47 @@ impl<'a> InitRating<'a> {
 
         // Perform validations here
         AdminAccount::check_is_valid_admin(accounts.admin)?;
+        msg!("Admin account validated");
         accounts.rating_bump = RatingAccount::check_is_valid_rating(
             accounts.rating,
             accounts.authority,
-            &payload.movie_title,
+            payload.movie_title.as_bytes(),
         )?;
+        msg!("Rating account validated");
         RatingAccount::check_is_empty(accounts.rating)?;
+        msg!("Rating account is empty");
         SystemProgramAccount::check_is_system_program(accounts.system_program)?;
         TokenProgramAccount::check_is_token_program(accounts.token_program)?;
+        msg!("Token program validated");
         AssociateTokenProgram::check_is_associate_token_program(accounts.associated_token_program)?;
-        TokenAccount::check(accounts.authority_ata)?;
-        TokenAccount::check(accounts.admin_ata)?;
+        msg!("Associated token program validated");
         AssociatedTokenAccount::check_is_valid_ata(
             accounts.authority_ata,
             accounts.authority,
             accounts.ratings_mint,
         )?;
+        msg!("Authority ATA account validated");
         AssociatedTokenAccount::check_is_valid_ata(
             accounts.admin_ata,
             accounts.admin,
             accounts.ratings_mint,
         )?;
+        msg!("Admin ATA account validated");
 
+        // Load admin state
         let admin_data: Ref<'_, AdminState> = AdminState::load(accounts.admin)?;
-
+        msg!("Admin state loaded");
         MintAccount::check_is_mint(accounts.ratings_mint, &admin_data.token_mint)?;
+        msg!("Mint account validated");
 
-        // TODO: Add the rest of your init logic here, e.g., create account, etc.
+        // Set Rating seeds
+        let bump_slice: [u8; 1] = [accounts.rating_bump];
+        let rating_seeds: [Seed<'_>; 3] = [
+            Seed::from(accounts.authority.key().as_ref()),
+            Seed::from(payload.movie_title.as_bytes()),
+            Seed::from(&bump_slice),
+        ];
+        let rating_signer: [Signer<'_, '_>; 1] = [Signer::from(&rating_seeds)];
 
         let rent: Rent = Rent::get()?;
 
@@ -171,7 +162,8 @@ impl<'a> InitRating<'a> {
             space: RatingState::LEN as u64,
             owner: &crate::ID,
         }
-        .invoke()?;
+        .invoke_signed(&rating_signer)?;
+        msg!("Rating account created");
 
         // Build and serilaise Rating data
         let rating_state: RatingState = RatingState::set_inner(
@@ -184,15 +176,26 @@ impl<'a> InitRating<'a> {
 
         let mut rating_data: RefMut<'_, [u8]> = accounts.rating.try_borrow_mut_data()?;
         rating_data[..RatingState::LEN].copy_from_slice(rating_state.as_ref());
+        msg!("Rating data serialized");
 
         // Init Authority ATA if it doesn't exist
         if accounts.authority_ata.data_len() != PinoTokenAccount::LEN {
+            CreateAccount {
+                from: accounts.authority,
+                to: accounts.authority_ata,
+                lamports: rent.minimum_balance(PinoTokenAccount::LEN),
+                space: PinoTokenAccount::LEN as u64,
+                owner: &TOKEN_PROGRAM_ID,
+            }
+            .invoke()?;
+
             InitializeAccount3 {
                 account: accounts.authority_ata,
                 mint: accounts.ratings_mint,
                 owner: &TOKEN_PROGRAM_ID,
             }
             .invoke()?;
+            msg!("Authority ATA initialized");
         }
 
         // Transfer tokens from admin to authority
@@ -209,7 +212,7 @@ impl<'a> InitRating<'a> {
             Seed::from(b"ratings_admin"),
             Seed::from(&[admin_data.bump]),
         ])])?;
-
+        msg!("Tokens transferred from admin to authority");
         Ok(())
     }
 }

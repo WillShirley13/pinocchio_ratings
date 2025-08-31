@@ -1,14 +1,16 @@
-use crate::{AdminState, helpers::*};
+use crate::{helpers::*, AdminState};
 use pinocchio::{
-    ProgramResult,
     account_info::{AccountInfo, RefMut},
     instruction::{Seed, Signer},
+    msg,
     program_error::ProgramError,
-    sysvars::{Sysvar, rent::Rent},
+    sysvars::{rent::Rent, Sysvar},
+    ProgramResult,
 };
+use pinocchio_associated_token_account::instructions::Create;
 use pinocchio_system::instructions::CreateAccount;
 use pinocchio_token::{
-    instructions::{InitializeAccount3, InitializeMint2, MintTo},
+    instructions::{InitializeMint2, MintTo},
     state::Mint,
 };
 pub struct InitAdminAccounts<'a> {
@@ -26,15 +28,8 @@ impl<'a> TryFrom<&'a [AccountInfo]> for InitAdminAccounts<'a> {
     type Error = ProgramError;
 
     fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
-        let [
-            authority,
-            admin,
-            ratings_mint,
-            admin_ata,
-            system_program,
-            token_program,
-            associated_token_program,
-        ] = accounts
+        let [authority, admin, ratings_mint, admin_ata, system_program, token_program, associated_token_program] =
+            accounts
         else {
             return Err(ProgramError::InvalidArgument);
         };
@@ -91,22 +86,29 @@ impl<'a> InitAdmin<'a> {
     pub const DISCRIMINATOR: u8 = 0;
 
     pub fn process(self) -> ProgramResult {
+        msg!("Instruction: InitAdmin");
         let mut accounts: InitAdminAccounts<'a> = self.accounts; // Make mutable if needed
         let payload: InitAdminPayload = self.payload;
 
         // Moved validations
         SignerAccount::check_is_signer(accounts.authority)?;
+        msg!("Authority account validated");
         accounts.bump = AdminAccount::check_is_valid_admin(accounts.admin)?;
+        msg!("Admin account validated");
         AdminAccount::check_is_empty(accounts.admin)?;
+        msg!("Admin account is empty");
         SystemProgramAccount::check_is_system_program(accounts.system_program)?;
+        msg!("System program validated");
         TokenProgramAccount::check_is_token_program(accounts.token_program)?;
+        msg!("Token program validated");
         AssociateTokenProgram::check_is_associate_token_program(accounts.associated_token_program)?;
+        msg!("Associated token program validated");
         AssociatedTokenAccount::check_is_valid_ata(
             accounts.admin_ata,
-            accounts.authority,
+            accounts.admin,
             accounts.ratings_mint,
         )?;
-
+        msg!("Admin ATA account validated");
         let bump_slice: [u8; 1] = [accounts.bump];
 
         let seeds: [Seed<'_>; 2] = [
@@ -126,7 +128,7 @@ impl<'a> InitAdmin<'a> {
             owner: &crate::ID,
         }
         .invoke_signed(&signer)?;
-
+        msg!("Admin account created");
         // Create and Init Mint
         let mint_rent: u64 = Rent::get()?.minimum_balance(Mint::LEN);
 
@@ -138,7 +140,7 @@ impl<'a> InitAdmin<'a> {
             owner: &pinocchio_token::ID,
         }
         .invoke()?;
-
+        msg!("Mint account created");
         InitializeMint2 {
             mint: accounts.ratings_mint,
             mint_authority: accounts.admin.key(),
@@ -146,14 +148,21 @@ impl<'a> InitAdmin<'a> {
             freeze_authority: None,
         }
         .invoke()?;
+        msg!("Mint initialized");
 
         // Init Admin associated token account
-        InitializeAccount3 {
+        // Add before InitializeAccount3:
+
+        Create {
+            funding_account: accounts.authority,
             account: accounts.admin_ata,
+            wallet: accounts.admin,
             mint: accounts.ratings_mint,
-            owner: accounts.admin.key(),
+            system_program: accounts.system_program,
+            token_program: accounts.token_program,
         }
         .invoke()?;
+        msg!("Admin ATA account created and initialized");
 
         // Mint (1000 * reward_amount) to admin associated token account
         MintTo {
@@ -162,8 +171,8 @@ impl<'a> InitAdmin<'a> {
             mint_authority: accounts.admin,
             amount: payload.reward_amount * 1000,
         }
-        .invoke()?;
-
+        .invoke_signed(&signer)?;
+        msg!("Minted to admin ATA account");
         // Write admin state to admin account
         let admin_state = {
             AdminState {
@@ -173,10 +182,10 @@ impl<'a> InitAdmin<'a> {
                 bump: accounts.bump,
             }
         };
-
+        msg!("Admin state created");
         let mut admin_data: RefMut<'_, [u8]> = accounts.admin.try_borrow_mut_data()?;
         admin_data[..AdminState::LEN].copy_from_slice(admin_state.as_ref());
-
+        msg!("Admin state written to admin account");
         Ok(())
     }
 }
