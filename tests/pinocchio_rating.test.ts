@@ -42,6 +42,8 @@ import {
 import { SYSTEM_PROGRAM_ADDRESS } from "@solana-program/system";
 import { estimateComputeUnitLimitFactory } from "@solana-program/compute-budget";
 
+// TESTS ARE BASIC AND NOT COMPREHENSIVE
+
 describe("Pinocchio Rating tests", () => {
 	let rpc: Rpc<SolanaRpcApi>;
 	let rpcSubscriptions: RpcSubscriptions<SolanaRpcSubscriptionsApi>;
@@ -52,7 +54,9 @@ describe("Pinocchio Rating tests", () => {
 	let user: KeyPairSigner;
 	let ratingMint: KeyPairSigner;
 	let adminPDA: Address;
+	let adminPDABump: number;
 	let adminATA: Address;
+	let adminATABump: number;
 
 	beforeAll(async () => {
 		rpc = createSolanaRpc("http://127.0.0.1:8899");
