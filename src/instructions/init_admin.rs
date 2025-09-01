@@ -151,8 +151,6 @@ impl<'a> InitAdmin<'a> {
         msg!("Mint initialized");
 
         // Init Admin associated token account
-        // Add before InitializeAccount3:
-
         Create {
             funding_account: accounts.authority,
             account: accounts.admin_ata,

@@ -9,7 +9,7 @@
         "@solana-program/memo": "0.7.0",
         "@solana-program/system": "0.7.0",
         "@solana-program/token": "0.5.1",
-        "@solana/kit": "3.0.0",
+        "@solana/kit": "3.0.1",
         "@solana/programs": "3.0.0"
     },
     "devDependencies": {

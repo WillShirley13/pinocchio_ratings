@@ -9,13 +9,11 @@ use pinocchio::{
     sysvars::{clock, rent::Rent, Sysvar},
 };
 use pinocchio::{msg, ProgramResult};
+use pinocchio_associated_token_account::instructions::Create;
 use pinocchio_system::instructions::CreateAccount;
 use pinocchio_token::instructions::TransferChecked;
 use pinocchio_token::state::Mint;
-use pinocchio_token::{
-    instructions::InitializeAccount3, state::TokenAccount as PinoTokenAccount,
-    ID as TOKEN_PROGRAM_ID,
-};
+use pinocchio_token::state::TokenAccount as PinoTokenAccount;
 
 pub struct InitRatingAccounts<'a> {
     pub authority: &'a AccountInfo,
@@ -180,22 +178,16 @@ impl<'a> InitRating<'a> {
 
         // Init Authority ATA if it doesn't exist
         if accounts.authority_ata.data_len() != PinoTokenAccount::LEN {
-            CreateAccount {
-                from: accounts.authority,
-                to: accounts.authority_ata,
-                lamports: rent.minimum_balance(PinoTokenAccount::LEN),
-                space: PinoTokenAccount::LEN as u64,
-                owner: &TOKEN_PROGRAM_ID,
-            }
-            .invoke()?;
-
-            InitializeAccount3 {
+            Create {
+                funding_account: accounts.authority,
                 account: accounts.authority_ata,
+                wallet: accounts.authority,
                 mint: accounts.ratings_mint,
-                owner: &TOKEN_PROGRAM_ID,
+                system_program: accounts.system_program,
+                token_program: accounts.token_program,
             }
             .invoke()?;
-            msg!("Authority ATA initialized");
+            msg!("Authority ATA created");
         }
 
         // Transfer tokens from admin to authority

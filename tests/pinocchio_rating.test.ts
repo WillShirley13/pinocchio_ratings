@@ -28,8 +28,11 @@ import {
 	getAddressCodec,
 	getU64Codec,
 	getU8Codec,
-	none,
-	type ProgramDerivedAddress,
+	getUtf8Codec,
+	fixCodecSize,
+	getI64Codec,
+	getUtf8Encoder,
+	getAddressEncoder,
 } from "@solana/kit";
 import {
 	TOKEN_PROGRAM_ADDRESS,
@@ -37,10 +40,7 @@ import {
 	findAssociatedTokenPda,
 } from "@solana-program/token";
 import { SYSTEM_PROGRAM_ADDRESS } from "@solana-program/system";
-import {
-	estimateComputeUnitLimitFactory,
-	getSetComputeUnitLimitInstruction,
-} from "@solana-program/compute-budget";
+import { estimateComputeUnitLimitFactory } from "@solana-program/compute-budget";
 
 describe("Pinocchio Rating tests", () => {
 	let rpc: Rpc<SolanaRpcApi>;
@@ -52,9 +52,7 @@ describe("Pinocchio Rating tests", () => {
 	let user: KeyPairSigner;
 	let ratingMint: KeyPairSigner;
 	let adminPDA: Address;
-	let adminPDABump: number;
 	let adminATA: Address;
-	let adminATABump: number;
 
 	beforeAll(async () => {
 		rpc = createSolanaRpc("http://127.0.0.1:8899");
@@ -162,14 +160,16 @@ describe("Pinocchio Rating tests", () => {
 
 		let blockhash = (await rpc.getLatestBlockhash().send()).value;
 
-		let transactiontx = pipe(
+		let transactionMsg = pipe(
 			createTransactionMessage({ version: 0 }),
 			(tx) => setTransactionMessageFeePayerSigner(adminAuthority, tx),
 			(tx) => setTransactionMessageLifetimeUsingBlockhash(blockhash, tx),
 			(tx) => appendTransactionMessageInstruction(initAdminIx, tx)
 		);
 
-		const signedTx = await signTransactionMessageWithSigners(transactiontx);
+		const signedTx = await signTransactionMessageWithSigners(
+			transactionMsg
+		);
 
 		const sendAndConfirm = sendAndConfirmTransactionFactory({
 			rpc,
@@ -241,7 +241,10 @@ describe("Pinocchio Rating tests", () => {
 
 		let [ratingPDA, bump] = await getProgramDerivedAddress({
 			programAddress: programId,
-			seeds: [getAddressCodec().encode(user.address), Buffer.from(movieTitle, 'utf-8')],
+			seeds: [
+				getAddressCodec().encode(user.address),
+				getUtf8Encoder().encode(movieTitle),
+			],
 		});
 		console.log("Rating PDA: ", ratingPDA);
 
@@ -251,7 +254,7 @@ describe("Pinocchio Rating tests", () => {
 			mint: ratingMint.address,
 		});
 		console.log("User ATA: ", userATA);
-        
+
 		const initRatingAccounts = [
 			{
 				address: user.address,
@@ -304,9 +307,242 @@ describe("Pinocchio Rating tests", () => {
 			await sendAndConfirmFactory(signedTx, { commitment: "confirmed" });
 			console.log("Transaction successful");
 		} catch (error: any) {
-			console.log(`Transaction failed with error: ${JSON.stringify(error.context, (key, value) =>
-                typeof value === "bigint" ? value.toString() : value,
-            2)}`);
+			console.log(
+				`Transaction failed with error: ${JSON.stringify(
+					error.context,
+					(key, value) =>
+						typeof value === "bigint" ? value.toString() : value,
+					2
+				)}`
+			);
 		}
+
+		let ratingPDAAccountInfo = await fetchEncodedAccount(rpc, ratingPDA);
+		assertAccountExists(ratingPDAAccountInfo);
+
+		expect(ratingPDAAccountInfo.data.byteLength).toEqual(88);
+		expect(ratingPDAAccountInfo.programAddress).toEqual(programId);
+
+		let ratingStateCodec = getStructCodec([
+			["movieTitle", fixCodecSize(getUtf8Codec(), 32)],
+			["rating", getU8Codec()],
+			["owner", getAddressCodec()],
+			["timestamp", getI64Codec()],
+			["bump", getU8Codec()],
+		]);
+
+		let ratingState = ratingStateCodec.decode(ratingPDAAccountInfo.data);
+		console.log(
+			"Rating state:",
+			JSON.stringify(
+				ratingState,
+				(key, value) =>
+					typeof value === "bigint" ? value.toString() : value,
+				2
+			)
+		);
+	});
+
+	it("Init rating 2", async () => {
+		let ixDiscriminator = 1;
+		let movieTitle = "Garfield";
+		let rating = 6;
+		// Calculate total size needed
+		const discriminatorSize = 1; // u8
+		const titleSize = movieTitle.length; // string length
+		const ratingSize = 1; // u8
+		const totalSize = discriminatorSize + titleSize + ratingSize;
+
+		// Pre-allocate buffer
+		let initRatingPayload = Buffer.alloc(totalSize);
+
+		// Write values at correct offsets
+		initRatingPayload.writeUInt8(ixDiscriminator, 0);
+		// Write the title and capture how many bytes were actually written
+		const titleBytesWritten = initRatingPayload.write(movieTitle, 1);
+
+		// Then write the rating at the correct offset
+		initRatingPayload.writeUInt8(rating, 1 + titleBytesWritten);
+
+		let [ratingPDA, bump] = await getProgramDerivedAddress({
+			programAddress: programId,
+			seeds: [
+				getAddressCodec().encode(user.address),
+				getUtf8Encoder().encode(movieTitle),
+			],
+		});
+		console.log("Rating PDA: ", ratingPDA);
+
+		let [userATA, userATABump] = await findAssociatedTokenPda({
+			owner: user.address,
+			tokenProgram: TOKEN_PROGRAM_ADDRESS,
+			mint: ratingMint.address,
+		});
+		console.log("User ATA: ", userATA);
+
+		const initRatingAccounts = [
+			{
+				address: user.address,
+				role: AccountRole.WRITABLE_SIGNER,
+				signer: user,
+			},
+			{ address: ratingPDA, role: AccountRole.WRITABLE },
+			{ address: userATA, role: AccountRole.WRITABLE },
+			{ address: adminPDA, role: AccountRole.READONLY },
+			{ address: adminATA, role: AccountRole.WRITABLE },
+			{ address: ratingMint.address, role: AccountRole.READONLY },
+			{ address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY },
+			{ address: TOKEN_PROGRAM_ADDRESS, role: AccountRole.READONLY },
+			{
+				address: ASSOCIATED_TOKEN_PROGRAM_ADDRESS,
+				role: AccountRole.READONLY,
+			},
+		];
+
+		const initRatingIx = {
+			programAddress: programId,
+			accounts: initRatingAccounts,
+			data: initRatingPayload,
+		};
+
+		let recentBlockHash = (await rpc.getLatestBlockhash().send()).value;
+
+		let computeLimitFactory = estimateComputeUnitLimitFactory({ rpc });
+
+		let initRatingPipe = pipe(
+			createTransactionMessage({ version: 0 }),
+			(tx) => setTransactionMessageFeePayerSigner(user, tx),
+			(tx) =>
+				setTransactionMessageLifetimeUsingBlockhash(
+					recentBlockHash,
+					tx
+				),
+			(tx) => appendTransactionMessageInstruction(initRatingIx, tx)
+		);
+
+		let signedTx = await signTransactionMessageWithSigners(initRatingPipe);
+		assertIsTransactionWithinSizeLimit(signedTx);
+
+		let sendAndConfirmFactory = sendAndConfirmTransactionFactory({
+			rpc,
+			rpcSubscriptions,
+		});
+
+		try {
+			await sendAndConfirmFactory(signedTx, { commitment: "confirmed" });
+			console.log("Transaction successful");
+		} catch (error: any) {
+			console.log(
+				`Transaction failed with error: ${JSON.stringify(
+					error.context,
+					(key, value) =>
+						typeof value === "bigint" ? value.toString() : value,
+					2
+				)}`
+			);
+		}
+
+		let ratingPDAAccountInfo = await fetchEncodedAccount(rpc, ratingPDA);
+		assertAccountExists(ratingPDAAccountInfo);
+
+		expect(ratingPDAAccountInfo.data.byteLength).toEqual(88);
+		expect(ratingPDAAccountInfo.programAddress).toEqual(programId);
+
+		let ratingStateCodec = getStructCodec([
+			["movieTitle", fixCodecSize(getUtf8Codec(), 32)],
+			["rating", getU8Codec()],
+			["owner", getAddressCodec()],
+			["timestamp", getI64Codec()],
+			["bump", getU8Codec()],
+		]);
+
+		let ratingState = ratingStateCodec.decode(ratingPDAAccountInfo.data);
+		console.log(
+			"Rating state:",
+			JSON.stringify(
+				ratingState,
+				(key, value) =>
+					typeof value === "bigint" ? value.toString() : value,
+				2
+			)
+		);
+
+		let userTokenBalance = await rpc.getTokenAccountBalance(userATA).send();
+		console.log("User token balance: ", userTokenBalance);
+	});
+
+	it("Delete rating", async () => {
+		let ixDiscriminator = 2;
+		let movieTitle = "Garfield";
+
+		let [ratingPDA, bump] = await getProgramDerivedAddress({
+			programAddress: programId,
+			seeds: [
+				getAddressEncoder().encode(user.address),
+				getUtf8Encoder().encode(movieTitle),
+			],
+		});
+        console.log('Rating PDA to be deleted: ', ratingPDA);
+
+		let deleteRatingAccounts = [
+			{
+				address: user.address,
+				role: AccountRole.READONLY_SIGNER,
+				signer: user,
+			},
+			{ address: ratingPDA, role: AccountRole.WRITABLE },
+			{ address: SYSTEM_PROGRAM_ADDRESS, role: AccountRole.READONLY },
+		];
+
+		let deleteRatingIx = {
+			programAddress: programId,
+			accounts: deleteRatingAccounts,
+			data: Buffer.from([ixDiscriminator]),
+		};
+
+		let recentBlockhash = await rpc.getLatestBlockhash().send();
+
+		let deleteRatingPipe = pipe(
+			createTransactionMessage({ version: 0 }),
+			(tx) => setTransactionMessageFeePayerSigner(user, tx),
+			(tx) =>
+				setTransactionMessageLifetimeUsingBlockhash(
+					recentBlockhash.value,
+					tx
+				),
+			(tx) => appendTransactionMessageInstruction(deleteRatingIx, tx)
+		);
+
+		let signedTx = await signTransactionMessageWithSigners(
+			deleteRatingPipe
+		);
+		assertIsTransactionWithinSizeLimit(signedTx);
+
+		let sendAndConfirm = sendAndConfirmTransactionFactory({
+			rpc,
+			rpcSubscriptions,
+		});
+
+		try {
+			await sendAndConfirm(signedTx, { commitment: "confirmed" });
+			console.log("Transaction was successful");
+		} catch (error: any) {
+			console.log(
+				"Error: ",
+				JSON.stringify(
+					error.context,
+					(key, value) => {
+						return typeof value === "bigint" ? value.toString() : value;
+					},
+					2
+				)
+			);
+		}
+
+        let ratingPDAAccountInfo = await fetchEncodedAccount(rpc, ratingPDA);
+        // assertAccountExists(ratingPDAAccountInfo);
+
+        expect(ratingPDAAccountInfo.exists).toEqual(false);
+
 	});
 });

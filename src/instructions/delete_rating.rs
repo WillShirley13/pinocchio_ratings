@@ -1,11 +1,11 @@
 use crate::{RatingAccount, RatingState, SignerAccount, SystemProgramAccount};
+use pinocchio::msg;
 use pinocchio::{
     account_info::{AccountInfo, Ref},
     instruction::{Seed, Signer},
     program_error::ProgramError,
     ProgramResult,
 };
-use pinocchio_system::instructions::Transfer;
 
 pub struct DeleteRatingAccounts<'a> {
     pub authority: &'a AccountInfo,
@@ -48,31 +48,40 @@ impl<'a> DeleteRating<'a> {
 
     pub fn process(&mut self) -> ProgramResult {
         SignerAccount::check_is_signer(self.accounts.authority)?;
+        msg!("Checked if authority is signer");
         SystemProgramAccount::check_is_system_program(self.accounts.system_program)?;
+        msg!("Checked system program");
 
         let rating_data: Ref<'_, RatingState> = RatingState::load(self.accounts.rating)?;
+        msg!("Loaded rating data");
+
+        let movie_title_length = rating_data
+            .movie_title
+            .iter()
+            .filter(|val| **val != 0u8)
+            .count();
 
         RatingAccount::check_is_valid_rating(
             self.accounts.rating,
             self.accounts.authority,
-            &rating_data.movie_title,
+            &rating_data.movie_title[..movie_title_length],
         )?;
+        msg!("Validated rating account");
+
+        let bump_slice: [u8; 1] = [rating_data.bump];
+
+        let movie_title_seed: Vec<u8> = rating_data.movie_title[..movie_title_length].to_vec();
+        drop(rating_data);
 
         let rating_lamports: u64 = self.accounts.rating.lamports();
 
-        let seeds: [Seed<'_>; 2] = [
-            Seed::from(self.accounts.authority.key().as_ref()),
-            Seed::from(rating_data.movie_title.as_ref()),
-        ]; // POTENTIALLY TROUBLESOME
-
-        Transfer {
-            from: self.accounts.rating,
-            to: self.accounts.authority,
-            lamports: rating_lamports,
-        }
-        .invoke_signed(&[Signer::from(&seeds)])?;
+        // Direct lamport manipulation
+        *self.accounts.rating.try_borrow_mut_lamports()? -= rating_lamports;
+        *self.accounts.authority.try_borrow_mut_lamports()? += rating_lamports;
+        msg!("Transferred lamports back to authority");
 
         self.accounts.rating.close()?;
+        msg!("Closed rating account");
 
         Ok(())
     }
